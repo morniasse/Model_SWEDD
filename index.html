@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIG Sénégal - Échantillonnage Localités</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        :root {
+            --primary-green: #006400; /* ELU */
+            --secondary-green: #90EE90; /* NON ELU */
+            --sidebar-width: 380px;
+            --header-height: 60px;
+            --bg-light: #f8fafc;
+            --text-main: #1e293b;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            font-family: 'Inter', -apple-system, sans-serif;
+            color: var(--text-main);
+            overflow: hidden;
+        }
+
+        #dashboard {
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+            position: relative;
+        }
+
+        /* Panneau latéral */
+        #sidebar {
+            width: var(--sidebar-width);
+            background: white;
+            box-shadow: 4px 0 10px rgba(0,0,0,0.05);
+            display: flex;
+            flex-direction: column;
+            z-index: 1000;
+            transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        #sidebar.collapsed {
+            transform: translateX(calc(-1 * var(--sidebar-width)));
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            background: var(--primary-green);
+            color: white;
+        }
+
+        .sidebar-header h2 {
+            margin: 0;
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .stats {
+            display: flex;
+            gap: 15px;
+            margin-top: 10px;
+            font-size: 0.85rem;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        /* Table */
+        .table-container {
+            flex-grow: 1;
+            overflow-y: auto;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        thead {
+            position: sticky;
+            top: 0;
+            background: #f1f5f9;
+            z-index: 10;
+        }
+
+        th {
+            text-align: left;
+            padding: 12px 15px;
+            font-weight: 600;
+            border-bottom: 2px solid #e2e8f0;
+        }
+
+        td {
+            padding: 10px 15px;
+            border-bottom: 1px solid #f1f5f9;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        tr:hover td {
+            background-color: #f0fdf4;
+        }
+
+        .badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-elu { background: #dcfce7; color: #166534; }
+        .badge-non-elu { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+
+        /* Carte */
+        #map-container {
+            flex-grow: 1;
+            position: relative;
+        }
+
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+
+        /* Bouton de basculement */
+        #toggle-sidebar {
+            position: absolute;
+            left: var(--sidebar-width);
+            top: 20px;
+            z-index: 1001;
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 0 4px 4px 0;
+            padding: 10px 6px;
+            cursor: pointer;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+            transition: left 0.4s;
+        }
+
+        .collapsed + #map-container #toggle-sidebar {
+            left: 0;
+        }
+
+        /* Popups Leaflet */
+        .custom-popup .leaflet-popup-content-wrapper {
+            border-radius: 8px;
+            padding: 5px;
+        }
+        .popup-title {
+            font-weight: bold;
+            color: var(--primary-green);
+            border-bottom: 1px solid #eee;
+            margin-bottom: 5px;
+            padding-bottom: 2px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            #sidebar {
+                position: absolute;
+                height: 50%;
+                width: 100%;
+                bottom: 0;
+                top: auto;
+            }
+            #sidebar.collapsed {
+                transform: translateY(100%);
+            }
+            #toggle-sidebar { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="dashboard">
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <h2>Localités du Sénégal</h2>
+            <div class="stats" id="quick-stats">
+                <!-- Rempli par JS -->
+            </div>
+        </div>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Localité</th>
+                        <th>Statut</th>
+                    </tr>
+                </thead>
+                <tbody id="data-table-body">
+                    <!-- Rempli par JS -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="map-container">
+        <button id="toggle-sidebar" title="Masquer/Afficher la table">◀</button>
+        <div id="map"></div>
+    </div>
+</div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+    /**
+     * DONNÉES SOURCES (Extraites de votre fichier CSV)
+     */
+    const rawData = [
+       { name: "Toki Gare", region: "Diourbel", dept: "Diourbel", status: "ELU", lat: 14.7333, lng: -16.1833 },
+{ name: "Ngoyé", region: "Diourbel", dept: "Bambey", status: "ELU", lat: 14.6500, lng: -16.4000 },
+{ name: "Baba Garage", region: "Diourbel", dept: "Bambey", status: "ELU", lat: 14.8667, lng: -16.3333 },
+{ name: "Touré mbonde", region: "Diourbel", dept: "Bambey", status: "NON ELU", lat: 14.7237, lng: -16.2231 },
+{ name: "Kael", region: "Diourbel", dept: "Mbacké", status: "ELU", lat: 14.6917, lng: -15.8236 },
+{ name: "Taif", region: "Diourbel", dept: "Mbacké", status: "NON ELU", lat: 14.8682, lng: -15.8800 },
+{ name: "Diaoulé,", region: "Fatick", dept: "Fatick", status: "NON ELU", lat: 14.3750, lng: -16.2219 },
+{ name: "Ndiop,", region: "Fatick", dept: "Fatick", status: "NON ELU", lat: 14.5459, lng: -16.2547 },
+{ name: "Mbelacadiao,", region: "Fatick", dept: "Fatick", status: "NON ELU", lat: 14.3377, lng: -16.2940 },
+{ name: "Thiare ndialgui,", region: "Fatick", dept: "Fatick", status: "NON ELU", lat: 14.4474, lng: -16.2483 },
+{ name: "Diouroup,", region: "Fatick", dept: "Fatick", status: "NON ELU", lat: 14.3995, lng: -16.5490 },
+{ name: "Diarrere,", region: "Fatick", dept: "Fatick", status: "NON ELU", lat: 14.4430, lng: -16.4826 },
+{ name: "Tattaguine,", region: "Fatick", dept: "Fatick", status: "NON ELU", lat: 14.4232, lng: -16.6066 },
+{ name: "Fimela,", region: "Fatick", dept: "Fatick", status: "NON ELU", lat: 14.1340, lng: -16.6624 },
+{ name: "Niakhar", region: "Fatick", dept: "Fatick", status: "NON ELU", lat: 14.4812, lng: -16.3977 },
+{ name: "loul sessene,", region: "Fatick", dept: "Fatick", status: "NON ELU", lat: 14.3133, lng: -16.6048 },
+{ name: "Djilass", region: "Fatick", dept: "Fatick", status: "NON ELU", lat: 14.2464, lng: -16.6347 },
+{ name: "Toubacouta", region: "Fatick", dept: "Foundiougne", status: "ELU", lat: 13.7833, lng: -16.4667 },
+{ name: "Passy", region: "Fatick", dept: "Foundiougne", status: "ELU", lat: 13.9167, lng: -16.2667 },
+{ name: "Diossong", region: "Fatick", dept: "Foundiougne", status: "ELU", lat: 13.8500, lng: -16.4000 },
+{ name: "Mbam,", region: "Fatick", dept: "Foundiougne", status: "NON ELU", lat: 14.1208, lng: -16.4363 },
+{ name: "Keur Saloum", region: "Fatick", dept: "Foundiougne", status: "NON ELU", lat: 13.7516, lng: -16.2687 },
+{ name: "Diané,", region: "Fatick", dept: "Foundiougne", status: "NON ELU", lat: 14.5622, lng: -16.3377 },
+{ name: "Keur Samba Gueye,", region: "Fatick", dept: "Foundiougne", status: "NON ELU", lat: 14.4826, lng: -16.0180 },
+{ name: "Djilor", region: "Fatick", dept: "Foundiougne", status: "NON ELU", lat: 14.0568, lng: -16.3359 },
+{ name: "loul sessene,", region: "Fatick", dept: "Foundiougne", status: "NON ELU", lat: 14.3133, lng: -16.6048 },
+{ name: "Djilass", region: "Fatick", dept: "Foundiougne", status: "NON ELU", lat: 14.2464, lng: -16.6347 },
+{ name: "Nioro Alassane Tall", region: "Fatick", dept: "Foundiougne", status: "ELU", lat: 13.7500, lng: -16.1333 },
+{ name: "Koutia Gaydi", region: "Tambacounda", dept: "Koumpentoum", status: "ELU", lat: 14.1500, lng: -13.9667 },
+{ name: "Bamba Tialène", region: "Tambacounda", dept: "Koumpentoum", status: "ELU", lat: 14.1000, lng: -14.2167 },
+{ name: "Payard", region: "Tambacounda", dept: "Koumpentoum", status: "ELU", lat: 14.0000, lng: -14.2833 },
+{ name: "KAHENE", region: "Tambacounda", dept: "Koumpentoum", status: "NON ELU", lat: 13.7516, lng: -14.7333 },
+{ name: "KOUTIABA OUOLOF", region: "Tambacounda", dept: "Koumpentoum", status: "NON ELU", lat: 14.1765, lng: -14.4528 },
+{ name: "Meroto", region: "Tambacounda", dept: "Koumpentoum", status: "NON ELU", lat: 13.8186, lng: -14.4400 },
+{ name: "Lour Escale", region: "Kaffrine", dept: "Koungheul", status: "ELU", lat: 14.0500, lng: -15.1500 },
+{ name: "Mabo", region: "", dept: "Koungheul", status: "NON ELU", lat: 14.1000, lng: -14.7500 },
+{ name: "Gnibi", region: "Kaffrine", dept: "Kaffrine", status: "ELU", lat: 14.2167, lng: -15.6500 },
+{ name: "Ganda", region: "Kaffrine", dept: "", status: "NON ELU", lat: 13.8304, lng: -15.4251 },
+{ name: "Ndiognick", region: "Kaffrine", dept: "", status: "NON ELU", lat: 14.0307, lng: -15.6445 },
+{ name: "Katakel", region: "Kaffrine", dept: "", status: "NON ELU", lat: 13.9534, lng: -15.4452 },
+{ name: "Mbégué", region: "Kaffrine", dept: "", status: "NON ELU", lat: 14.4830, lng: -15.4982 },
+{ name: "Ribot Escale", region: "Kaffrine", dept: "", status: "NON ELU", lat: 14.3765, lng: -14.6861 },
+{ name: "Ida Mouride", region: "Kaffrine", dept: "", status: "NON ELU", lat: 13.9876, lng: -14.6644 },
+{ name: "Touba Mbella", region: "Kaffrine", dept: "Mbirkilane", status: "ELU", lat: 14.0833, lng: -15.5500 },
+{ name: "Ndioum Nguente", region: "Kaffrine", dept: "Malem Hoddar", status: "ELU", lat: 14.2000, lng: -15.2833 },
+{ name: "Keur Madiabel", region: "Kaolack", dept: "Nioro", status: "ELU", lat: 13.6833, lng: -15.8833 },
+{ name: "Kayemor", region: "Kaolack", dept: "Nioro", status: "ELU", lat: 13.6500, lng: -15.6167 },
+{ name: "Paoskoto / Darou Salam", region: "Kaolack", dept: "Nioro", status: "ELU", lat: 13.7667, lng: -15.7833 },
+{ name: "Wack Ngouna", region: "Kaolack", dept: "Nioro", status: "ELU", lat: 13.6667, lng: -15.7500 },
+{ name: "Keur Maba Diakhou", region: "Kaolack", dept: "Nioro", status: "NON ELU", lat: 13.6507, lng: -15.9694 },
+{ name: "Médina Sabakh", region: "Kaolack", dept: "Nioro", status: "NON ELU", lat: 13.6000, lng: -15.5833 },
+{ name: "Ndrame escale", region: "Kaolack", dept: "Nioro", status: "NON ELU", lat: 13.8000, lng: -16.1667 },
+{ name: "Porokhane", region: "Kaolack", dept: "Nioro", status: "NON ELU", lat: 13.6948, lng: -15.8261 },
+{ name: "Keur Momar Sarr", region: "Louga", dept: "Louga", status: "ELU", lat: 15.9167, lng: -15.9667 },
+{ name: "Gassane", region: "Louga", dept: "Louga", status: "ELU", lat: 15.2500, lng: -15.2667 },
+{ name: "Gamdé", region: "Louga", dept: "Louga", status: "NON ELU", lat: 15.9150, lng: -15.9660 },
+{ name: "Doli", region: "Louga", dept: "Linguère", status: "ELU", lat: 15.4167, lng: -14.7833 },
+{ name: "Téssékéré", region: "Louga", dept: "Linguère", status: "ELU", lat: 15.8667, lng: -15.0500 },
+{ name: "Mbeulekhé", region: "Louga", dept: "Linguère", status: "NON ELU", lat: 15.6497, lng: -15.3493 },
+{ name: "Labgar", region: "Louga", dept: "Linguère", status: "NON ELU", lat: 15.8301, lng: -14.8093 },
+{ name: "Barkédji", region: "Louga", dept: "Linguère", status: "NON ELU", lat: 15.2787, lng: -14.8676 },
+{ name: "Thiéle", region: "Louga", dept: "Linguère", status: "NON ELU", lat: 15.6080, lng: -14.8930 },
+{ name: "Warkhokh", region: "Louga", dept: "Linguère", status: "NON ELU", lat: 15.3841, lng: -15.2370 },
+{ name: "Thiaméne", region: "Louga", dept: "Linguère", status: "NON ELU", lat: 15.3237, lng: -15.5155 },
+{ name: "Yang yang", region: "Louga", dept: "Linguère", status: "NON ELU", lat: 15.5894, lng: -15.3406 },
+{ name: "Boléle", region: "Louga", dept: "Linguère", status: "NON ELU", lat: 15.2589, lng: -14.1027 },
+{ name: "Sagata", region: "Louga", dept: "Linguère", status: "NON ELU", lat: 15.2162, lng: -15.5572 },
+{ name: "Thinokh", region: "Matam", dept: "Ranérou", status: "ELU", lat: 15.3000, lng: -13.8833 },
+{ name: "Vélingara Ferlo", region: "Matam", dept: "Ranérou", status: "ELU", lat: 15.1500, lng: -13.9167 },
+{ name: "youndou féré", region: "Matam", dept: "Ranérou", status: "NON ELU", lat: 15.2890, lng: -14.4620 },
+{ name: "loumboul", region: "Matam", dept: "Ranérou", status: "NON ELU", lat: 15.3240, lng: -13.7363 },
+{ name: "louguéré thioli", region: "Matam", dept: "Ranérou", status: "NON ELU", lat: 15.5669, lng: -14.6487 },
+{ name: "oudalay", region: "Matam", dept: "Ranérou", status: "NON ELU", lat: 15.2967, lng: -13.9605 },
+{ name: "Kanel", region: "Matam", dept: "Kanel", status: "ELU", lat: 15.4917, lng: -13.1764 },
+{ name: "Aouré", region: "Matam", dept: "Kanel", status: "ELU", lat: 15.1167, lng: -12.9833 },
+{ name: "Orkédièré", region: "Matam", dept: "Kanel", status: "NON ELU", lat: 15.2842, lng: -12.9616 },
+{ name: "Ndendory", region: "Matam", dept: "Kanel", status: "NON ELU", lat: 15.3475, lng: -13.0525 },
+{ name: "Sémé", region: "Matam", dept: "Kanel", status: "NON ELU", lat: 15.1993, lng: -12.9455 },
+{ name: "Bokki diawé", region: "Matam", dept: "Kanel", status: "NON ELU", lat: 15.8882, lng: -13.4921 },
+{ name: "Bantako (Tombrokoto)", region: "Kédougou", dept: "Kédougou", status: "ELU", lat: 12.7618, lng: -12.2422 },
+{ name: "Tombrokoto", region: "Kédougou", dept: "Kédougou", status: "NON ELU", lat: 12.7977, lng: -12.2926 },
+{ name: "Diagri (Bandafassi)", region: "Kédougou", dept: "Kédougou", status: "ELU", lat: 13.7621, lng: -12.3500 },
+{ name: "Samécouta", region: "Kédougou", dept: "Kédougou", status: "NON ELU", lat: 12.6069, lng: -12.1302 },
+{ name: "Missira Tantila", region: "Kédougou", dept: "Saraya", status: "ELU", lat: 12.5065, lng: -11.6920 },
+{ name: "Kossanto", region: "Kédougou", dept: "Saraya", status: "ELU", lat: 13.0167, lng: -11.7833 },
+{ name: "Kharakhéna (Bembouck)", region: "Kédougou", dept: "Saraya", status: "ELU", lat: 12.4719, lng: -11.4500 },
+{ name: "Q", region: "Kédougou", dept: "Saraya", status: "NON ELU", lat: 13.1640, lng: -12.1135 },
+{ name: "Tinkoto (Sabadola)", region: "Kédougou", dept: "Saraya", status: "NON ELU", lat: 12.9287, lng: -12.1203 },
+{ name: "Mama Khono (Sabadola)", region: "Kédougou", dept: "Saraya", status: "NON ELU", lat: 13.1826, lng: -12.0574 },
+{ name: "Kharakhéna (Bembouck )", region: "Kédougou", dept: "Saraya", status: "NON ELU", lat: 12.7166, lng: -12.2523 },
+{ name: "Diyabougou", region: "Tambacounda", dept: "Bakel", status: "ELU", lat: 14.4167, lng: -12.2500 },
+{ name: "Soreto", region: "Tambacounda", dept: "Bakel", status: "ELU", lat: 14.5167, lng: -12.3833 },
+{ name: "Sonkounkou ", region: "Tambacounda", dept: "Bakel", status: "NON ELU", lat: 13.3804, lng: -11.8959 },
+{ name: "Sanesamba/Moussala", region: "Tambacounda", dept: "Bakel", status: "NON ELU", lat: 13.6982, lng: -12.0761 }
+
+    ];
+
+    // Variables globales
+    let map, markers = [];
+    const markerGroup = L.layerGroup();
+    const eluColor = "#006400";
+    const nonEluColor = "#90EE90";
+
+    /**
+     * INITIALISATION DU TABLEAU DE BORD
+     */
+    function init() {
+        // Init Map
+        map = L.map('map', { zoomControl: false }).setView([14.4974, -14.4524], 7);
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        markerGroup.addTo(map);
+
+        // Peuplement UI
+        renderStats();
+        renderMarkersAndTable();
+
+        // Event Listeners
+        document.getElementById('toggle-sidebar').addEventListener('click', toggleSidebar);
+    }
+
+    /**
+     * RENDU DES MARQUEURS ET DE LA TABLE
+     */
+    function renderMarkersAndTable() {
+        const tableBody = document.getElementById('data-table-body');
+        
+        rawData.forEach((item, index) => {
+            // 1. Créer le marqueur
+            const style = {
+                radius: 8,
+                fillColor: item.status === "ELU" ? eluColor : nonEluColor,
+                color: "#ffffff",
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.9
+            };
+
+            const marker = L.circleMarker([item.lat, item.lng], style);
+            
+            // Tooltip au survol
+            marker.bindTooltip(`<strong>${item.name}</strong>`, { direction: 'top', offset: [0, -5] });
+
+            // Popup au clic
+            const popupHtml = `
+                <div class="custom-popup">
+                    <div class="popup-title">${item.name}</div>
+                    <div style="font-size:0.85rem">
+                        <b>Région:</b> ${item.region}<br>
+                        <b>Dépt:</b> ${item.dept}<br>
+                        <b>Statut:</b> <span style="color:${style.fillColor};font-weight:bold">${item.status}</span><br>
+                        <hr style="margin:5px 0; border:0; border-top:1px solid #eee">
+                        <small>${item.lat.toFixed(4)}, ${item.lng.toFixed(4)}</small>
+                    </div>
+                </div>
+            `;
+            marker.bindPopup(popupHtml);
+
+            // Zoom on marker click
+            marker.on('click', () => {
+                map.flyTo([item.lat, item.lng], 12);
+            });
+
+            marker.addTo(markerGroup);
+            markers.push(marker);
+
+            // 2. Créer la ligne de tableau
+            const tr = document.createElement('tr');
+            const statusClass = item.status === "ELU" ? "badge-elu" : "badge-non-elu";
+            
+            tr.innerHTML = `
+                <td><b>${item.name}</b><br><small style="color:#64748b">${item.dept}</small></td>
+                <td><span class="badge ${statusClass}">${item.status}</span></td>
+            `;
+
+            tr.addEventListener('click', () => {
+                focusLocation(item, marker);
+            });
+
+            tableBody.appendChild(tr);
+        });
+    }
+
+    /**
+     * FOCUS SUR UNE LOCALITÉ
+     */
+    function focusLocation(item, marker) {
+        map.flyTo([item.lat, item.lng], 12, { duration: 1.5 });
+        
+        // Attendre la fin du vol pour ouvrir le popup
+        setTimeout(() => {
+            marker.openPopup();
+            
+            // Effet visuel temporaire
+            const originalRadius = marker.getRadius();
+            marker.setRadius(15);
+            setTimeout(() => marker.setRadius(originalRadius), 1000);
+        }, 1200);
+
+        // Sur mobile, cacher la table après sélection
+        if(window.innerWidth <= 768) toggleSidebar();
+    }
+
+    /**
+     * GESTION DE L'INTERFACE
+     */
+    function toggleSidebar() {
+        const sidebar = document.getElementById('sidebar');
+        const btn = document.getElementById('toggle-sidebar');
+        sidebar.classList.toggle('collapsed');
+        btn.innerText = sidebar.classList.contains('collapsed') ? '▶' : '◀';
+        
+        // Redimensionner la carte après transition
+        setTimeout(() => map.invalidateSize(), 400);
+    }
+
+    function renderStats() {
+        const countElu = rawData.filter(d => d.status === "ELU").length;
+        const countNonElu = rawData.length - countElu;
+        
+        document.getElementById('quick-stats').innerHTML = `
+            <div class="stat-item"><span style="color:${eluColor}">●</span> ${countElu} Élus</div>
+            <div class="stat-item"><span style="color:${nonEluColor}">●</span> ${countNonElu} Non Élus</div>
+            <div class="stat-item" style="margin-left:auto">Total: ${rawData.length}</div>
+        `;
+    }
+
+    // Lancement
+    window.onload = init;
+
+</script>
+</body>
+</html>
